@@ -126,7 +126,8 @@ var int   structureDir = 0
 var float chochPrice = na
 var int   chochBar = 0
 
-if not na(confirmedTopPrice) and close > confirmedTopPrice and close[1] <= confirmedTopPrice and structureDir <= 0
+bool chochBullBreak = not na(confirmedTopPrice) and close > confirmedTopPrice and close[1] <= confirmedTopPrice and structureDir <= 0
+if chochBullBreak
     structureDir := 1
     chochPrice := confirmedTopPrice
     chochBar := bar_index
