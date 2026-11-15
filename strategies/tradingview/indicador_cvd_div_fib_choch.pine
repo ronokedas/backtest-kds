@@ -1,35 +1,29 @@
 //@version=5
-indicator("QuantumFlow: CVD DIV + FIB 0.5 + CHoCH [Fiel ao Gráfico]", shorttitle="QF CVD DIV FIB", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("QuantumFlow: CVD DIV + FIB 0.5 + CHoCH [Eixos Mecânicos Oficiais]", shorttitle="QF CVD DIV FIB [Eixos]", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 1. INPUTS & CONFIGURAÇÕES
+// 1. CONFIGURAÇÕES & PARÂMETROS
 // ══════════════════════════════════════════════════════════════════════════════
 grp_fibo  = "1. Estrutura & Fibonacci"
-pivLen    = input.int(5, "Sensibilidade dos Pivôs do CHoCH", minval=2, maxval=15, group=grp_fibo)
-fibTarget = input.float(0.50, "Nível de Fibonacci (50%)", minval=0.2, maxval=0.8, step=0.05, group=grp_fibo)
-maxRefWait= input.int(25, "Validade da Vela Referência (Barras)", minval=5, maxval=60, group=grp_fibo)
+fibTarget = input.float(0.50, "Nível Fibo de Retração (0.50)", minval=0.2, maxval=0.8, step=0.05, group=grp_fibo)
+rrRatio   = input.float(2.0, "Relação Risco:Retorno (Alvo R:R)", step=0.5, group=grp_fibo)
+slBuffer  = input.float(0.10, "Folga de Stop Loss (xATR)", step=0.05, group=grp_fibo)
 
-grp_cvd   = "2. Cumulative Volume Delta (CVD)"
+grp_cvd   = "2. Cumulative Volume Delta (CVD Suave Contínuo)"
 use1mTf   = input.bool(true, "Calcular Delta Real Intra-Bar (1m)", group=grp_cvd)
 cvdScale  = input.int(80, "Janela de Escala Visual do CVD", minval=20, maxval=200, group=grp_cvd)
-cvdHeight = input.float(0.20, "Altura da Linha de CVD no Painel", minval=0.05, maxval=0.5, step=0.02, group=grp_cvd)
+cvdHeight = input.float(0.20, "Altura Visual do CVD no Gráfico", minval=0.05, maxval=0.5, step=0.02, group=grp_cvd)
 
-grp_trade = "3. Gatilho & Gerenciamento de Risco"
-triggerMode= input.string("Violação da Máxima", "Modo de Entrada", options=["Violação da Máxima", "Fechamento Acima da Máxima"], group=grp_trade)
-riskReward= input.float(2.0, "Relação Risco:Retorno (Alvo R:R)", step=0.5, group=grp_trade)
-slBuffer  = input.float(0.15, "Folga do Stop Loss (xATR)", step=0.05, group=grp_trade)
-cooldown  = input.int(10, "Cooldown entre Sinais (Barras)", minval=2, group=grp_trade)
-
-grp_vis   = "4. Visualização"
+grp_vis   = "3. Visualização & HUD"
 showCvd   = input.bool(true, "Exibir Linha Laranja de CVD", group=grp_vis)
 showChoch = input.bool(true, "Exibir Linha e Texto de CHoCH", group=grp_vis)
-showFib   = input.bool(true, "Exibir Nível de 50% de Fibo", group=grp_vis)
+showFib   = input.bool(true, "Exibir Linha de 50% de Fibo", group=grp_vis)
 showLines = input.bool(true, "Exibir Linhas do Gatilho & Stop", group=grp_vis)
 showDiv   = input.bool(true, "Exibir Linhas de Divergência", group=grp_vis)
 showHud   = input.bool(true, "Exibir Painel de Métricas (HUD)", group=grp_vis)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 2. CÁLCULO DO CVD REAL (CONTÍNUO E SUAVE - IGUAL AO LOCALHOST:8090)
+// 2. CÁLCULO DO CVD REAL (CONTÍNUO E SUAVE - MESMA CURVATURA DO SISTEMA)
 // ══════════════════════════════════════════════════════════════════════════════
 atr14 = ta.atr(14)
 
@@ -65,76 +59,109 @@ cvdPlot = f_map_cvd(cvd)
 plot(showCvd ? cvdPlot : na, "CVD Institucional", color=color.new(#ff9800, 0), linewidth=2)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 3. IDENTIFICAÇÃO DO CHoCH & PERNADA DE IMPULSO
+// 3. MOTOR DE EIXOS MECÂNICOS DE TOPO E FUNDO (REGRAS OFICIAIS DO USUÁRIO)
 // ══════════════════════════════════════════════════════════════════════════════
-swH = ta.pivothigh(high, pivLen, pivLen)
-swL = ta.pivotlow(low, pivLen, pivLen)
+var int   swingState = 1
+var float candExtLow = na
+var float candValHigh = na
+var int   candExtLowBar = 0
+var float candExtLowCvd = na
 
-var float lastH = na
-var int   lastHBar = 0
-var float lastL = na
-var int   lastLBar = 0
+var float candExtHigh = na
+var float candValLow = na
+var int   candExtHighBar = 0
+var float candExtHighCvd = na
 
-if not na(swH)
-    lastH := swH
-    lastHBar := bar_index[pivLen]
+var float confirmedBottomPrice = na
+var int   confirmedBottomBar = 0
+var float confirmedBottomCvd = na
 
-if not na(swL)
-    lastL := swL
-    lastLBar := bar_index[pivLen]
+var float confirmedTopPrice = na
+var int   confirmedTopBar = 0
+var float confirmedTopCvd = na
 
-var int   marketState = 0
-var float chochLevel = na
-var int   chochBarIndex = 0
+bool bottomJustConfirmed = false
+bool topJustConfirmed = false
 
-chochBullBreak = not na(lastH) and close > lastH and close[1] <= lastH and marketState <= 0
+if swingState == 1
+    if na(candExtLow) or low < candExtLow
+        candExtLow := low
+        candValHigh := high
+        candExtLowBar := bar_index
+        candExtLowCvd := cvd
+    else if bar_index > candExtLowBar and high > candValHigh
+        confirmedBottomPrice := candExtLow
+        confirmedBottomBar := candExtLowBar
+        confirmedBottomCvd := candExtLowCvd
+        bottomJustConfirmed := true
 
-var float originLow = na
-var int   originLowBar = 0
-var float impulsePeak = na
-var int   impulsePeakBar = 0
-var float fib50Level = na
-var line  lnFib50 = na
+        swingState := 2
+        candExtHigh := high
+        candValLow := low
+        candExtHighBar := bar_index
+        candExtHighCvd := cvd
 
-if chochBullBreak
-    marketState := 1
-    chochLevel := lastH
-    chochBarIndex := bar_index
+else if swingState == 2
+    if na(candExtHigh) or high > candExtHigh
+        candExtHigh := high
+        candValLow := low
+        candExtHighBar := bar_index
+        candExtHighCvd := cvd
+    else if bar_index > candExtHighBar and low < candValLow
+        confirmedTopPrice := candExtHigh
+        confirmedTopBar := candExtHighBar
+        confirmedTopCvd := candExtHighCvd
+        topJustConfirmed := true
+
+        swingState := 1
+        candExtLow := low
+        candValHigh := high
+        candExtLowBar := bar_index
+        candExtLowCvd := cvd
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 4. DETECÇÃO DE CHoCH E FIBONACCI 50%
+// ══════════════════════════════════════════════════════════════════════════════
+var int   structureDir = 0
+var float chochPrice = na
+var int   chochBar = 0
+
+if not na(confirmedTopPrice) and close > confirmedTopPrice and close[1] <= confirmedTopPrice and structureDir <= 0
+    structureDir := 1
+    chochPrice := confirmedTopPrice
+    chochBar := bar_index
     if showChoch
-        line.new(lastHBar, lastH, bar_index, lastH, color=color.new(color.white, 20), width=1)
-        label.new(bar_index, lastH, "choch", style=label.style_none, textcolor=color.white, size=size.small)
-    
-    int lookbackOrigin = math.min(bar_index, 35)
-    float trueLow = ta.lowest(low, lookbackOrigin)
-    int trueLowOffset = 0
-    for j = 0 to lookbackOrigin - 1
-        if low[j] == trueLow
-            trueLowOffset := j
-            break
-    originLow := trueLow
-    originLowBar := bar_index - trueLowOffset
-    impulsePeak := high
-    impulsePeakBar := bar_index
-    fib50Level := na
-    line.delete(lnFib50)
+        line.new(confirmedTopBar, confirmedTopPrice, bar_index, confirmedTopPrice, color=color.new(color.white, 20), width=1)
+        label.new(bar_index, confirmedTopPrice, "choch", style=label.style_none, textcolor=color.white, size=size.small)
 
-if marketState == 1 and not na(originLow)
-    if high > impulsePeak
-        impulsePeak := high
-        impulsePeakBar := bar_index
-        fib50Level := impulsePeak - (impulsePeak - originLow) * fibTarget
+var float waveOriginLow = na
+var int   waveOriginLowBar = 0
+var float wavePeakHigh = na
+var int   wavePeakHighBar = 0
+var float fib50 = na
+var line  lnFib = na
+
+if structureDir == 1
+    if na(waveOriginLow) or (bottomJustConfirmed and confirmedBottomBar < chochBar)
+        waveOriginLow := not na(confirmedBottomPrice) ? confirmedBottomPrice : ta.lowest(low, 25)
+        waveOriginLowBar := not na(confirmedBottomBar) ? confirmedBottomBar : bar_index - 10
+
+    if topJustConfirmed and confirmedTopBar >= chochBar
+        wavePeakHigh := confirmedTopPrice
+        wavePeakHighBar := confirmedTopBar
+        fib50 := wavePeakHigh - (wavePeakHigh - waveOriginLow) * fibTarget
         if showFib
-            line.delete(lnFib50)
-            lnFib50 := line.new(originLowBar, fib50Level, bar_index + 20, fib50Level, color=color.new(#ff9800, 0), width=2)
-    else if not na(fib50Level) and showFib
-        line.set_x2(lnFib50, bar_index + 20)
+            line.delete(lnFib)
+            lnFib := line.new(waveOriginLowBar, fib50, bar_index + 25, fib50, color=color.new(#ff9800, 0), width=2)
+    else if not na(fib50) and showFib
+        line.set_x2(lnFib, bar_index + 15)
 
-if marketState == 1 and not na(originLow) and low < originLow
-    marketState := 0
-    line.delete(lnFib50)
+if structureDir == 1 and not na(waveOriginLow) and low < waveOriginLow
+    structureDir := 0
+    line.delete(lnFib)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 4. DETECÇÃO DA RETRAÇÃO, DIVERGÊNCIA DE CVD & VELA REFERÊNCIA
+// 5. IDENTIFICAÇÃO DOS 2 FUNDOS DO RECUO, DIVERGÊNCIA CVD & GATILHO
 // ══════════════════════════════════════════════════════════════════════════════
 var float dip1Price = na
 var float dip1Cvd = na
@@ -148,58 +175,55 @@ var float refCandleLow = na
 var float refCandleHigh = na
 var int   refCandleBar = -1
 
-var bool  divergenceConfirmed = false
-var int   divergenceBar = -1
-
-var line  lnDivPrice = na
-var line  lnDivCvd = na
-var line  lnTrigger = na
+var bool  divergenceFound = false
+var line  lnDivP = na
+var line  lnDivC = na
+var line  lnTrig = na
 var line  lnStop = na
 
-if marketState == 1 and not na(fib50Level) and (bar_index > impulsePeakBar)
-    if low > fib50Level and low[1] < low[2] and low[1] < low and na(dip1Price)
-        dip1Price := low[1]
+if structureDir == 1 and not na(fib50) and bar_index > wavePeakHighBar
+    if na(dip1Price) and ((bottomJustConfirmed and confirmedBottomPrice > fib50) or (low > fib50 and low[1] < low[2] and low[1] < low))
+        dip1Price := not na(confirmedBottomPrice) and confirmedBottomPrice > fib50 ? confirmedBottomPrice : low[1]
         dip1Cvd := cvd[1]
-        dip1Bar := bar_index - 1
+        dip1Bar := not na(confirmedBottomBar) and confirmedBottomBar < bar_index ? confirmedBottomBar : bar_index - 1
 
-    if low <= fib50Level
+    if low <= fib50
         if na(refCandleLow) or low < refCandleLow
             refCandleLow := low
             refCandleHigh := high
             refCandleBar := bar_index
             
-            dip2Price := low
-            dip2Cvd := cvd
-            dip2Bar := bar_index
-            
             if showLines
-                line.delete(lnTrigger)
+                line.delete(lnTrig)
                 line.delete(lnStop)
-                lnTrigger := line.new(refCandleBar, refCandleHigh, bar_index + 15, refCandleHigh, color=color.white, width=2)
+                lnTrig := line.new(refCandleBar, refCandleHigh, bar_index + 15, refCandleHigh, color=color.white, width=2)
                 lnStop := line.new(refCandleBar, refCandleLow, bar_index + 15, refCandleLow, color=color.red, width=1, style=line.style_dotted)
 
-        if not na(dip1Price) and not na(dip2Price) and (dip2Price < dip1Price) and (dip2Cvd >= dip1Cvd) and not divergenceConfirmed
-            divergenceConfirmed := true
-            divergenceBar := bar_index
+        float currentCvdAtLow = cvd
+        if not na(dip1Price) and not na(refCandleLow) and (refCandleLow < dip1Price) and (currentCvdAtLow >= dip1Cvd) and not divergenceFound
+            divergenceFound := true
+            dip2Price := refCandleLow
+            dip2Cvd := currentCvdAtLow
+            dip2Bar := refCandleBar
             if showDiv
-                line.delete(lnDivPrice)
-                line.delete(lnDivCvd)
-                lnDivPrice := line.new(dip1Bar, dip1Price, dip2Bar, dip2Price, color=color.white, width=2, style=line.style_dashed)
-                lnDivCvd := line.new(dip1Bar, f_map_cvd(dip1Cvd), dip2Bar, f_map_cvd(dip2Cvd), color=color.lime, width=2)
+                line.delete(lnDivP)
+                line.delete(lnDivC)
+                lnDivP := line.new(dip1Bar, dip1Price, dip2Bar, dip2Price, color=color.white, width=2, style=line.style_dashed)
+                lnDivC := line.new(dip1Bar, f_map_cvd(dip1Cvd), dip2Bar, f_map_cvd(dip2Cvd), color=color.lime, width=2)
 
-if showLines and refCandleBar >= 0 and (bar_index - refCandleBar <= maxRefWait)
-    line.set_x2(lnTrigger, bar_index + 10)
+if showLines and refCandleBar >= 0 and (bar_index - refCandleBar <= 30)
+    line.set_x2(lnTrig, bar_index + 10)
     line.set_x2(lnStop, bar_index + 10)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 5. GATILHO DE EXECUÇÃO EXATO (VIOLAÇÃO DA MÁXIMA DA VELA REFERÊNCIA)
+// 6. GATILHO DE EXECUÇÃO EXATO (DISPARO NA CONFIRMAÇÃO DO FUNDO ABAIXO DE 50%)
 // ══════════════════════════════════════════════════════════════════════════════
-var int  lastTradeBar = -100
-var bool tradeTakenWave = false
+var int  lastSignalBar = -100
+var bool tradeFiredWave = false
 
 if chochBullBreak
-    tradeTakenWave := false
-    divergenceConfirmed := false
+    tradeFiredWave := false
+    divergenceFound := false
     dip1Price := na
     dip1Bar := -1
     dip2Price := na
@@ -208,37 +232,37 @@ if chochBullBreak
     refCandleHigh := na
     refCandleBar := -1
 
-bool isTriggered = triggerMode == "Violação da Máxima" ? (high > refCandleHigh and high[1] <= refCandleHigh) : (close > refCandleHigh and close[1] <= refCandleHigh)
+bool isTriggerViolated = not na(refCandleHigh) and (high > refCandleHigh and high[1] <= refCandleHigh)
 
-bool canBuy = marketState == 1 and divergenceConfirmed and not tradeTakenWave and refCandleBar >= 0 and (bar_index > refCandleBar) and (bar_index - refCandleBar <= maxRefWait) and (bar_index - lastTradeBar >= cooldown)
+bool canBuy = structureDir == 1 and divergenceFound and not tradeFiredWave and refCandleBar >= 0 and (bar_index > refCandleBar) and (bar_index - lastSignalBar >= 8)
 
-buySignal = canBuy and isTriggered and barstate.isconfirmed
+buySignal = canBuy and isTriggerViolated and barstate.isconfirmed
 
-var float stopPrice = na
-var float takeProfit = na
-var float entryPrice = na
+var float activeEntry = na
+var float activeSL = na
+var float activeTP = na
 
 if buySignal
-    lastTradeBar := bar_index
-    tradeTakenWave := true
-    entryPrice := close
-    stopPrice := refCandleLow - (atr14 * slBuffer)
-    float risk = entryPrice - stopPrice
-    takeProfit := entryPrice + (risk * riskReward)
+    lastSignalBar := bar_index
+    tradeFiredWave := true
+    activeEntry := close
+    activeSL := refCandleLow - (atr14 * slBuffer)
+    float risk = activeEntry - activeSL
+    activeTP := activeEntry + (risk * rrRatio)
 
 plotshape(buySignal, "SINAL COMPRA", shape.labelup, location.belowbar, color.new(#00e676, 0), text="COMPRA\nFIBO 0.5 + CVD", textcolor=color.black, size=size.small)
 plotshape(refCandleBar >= 0 and bar_index == refCandleBar, "Vela Referência", shape.diamond, location.belowbar, color.new(color.yellow, 0), size=size.tiny)
 
-plot(buySignal ? stopPrice : na, "Stop Loss", color=color.red, linewidth=2, style=plot.style_linebr)
-plot(buySignal ? takeProfit : na, "Take Profit 2R", color=color.lime, linewidth=2, style=plot.style_linebr)
+plot(buySignal ? activeSL : na, "Stop Loss", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(buySignal ? activeTP : na, "Take Profit 2R", color=color.lime, linewidth=2, style=plot.style_linebr)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 6. SIMULAÇÃO INSTITUCIONAL & PLACAR HUD (WIN RATE / SALDO R)
+// 7. SIMULAÇÃO INSTITUCIONAL & PLACAR HUD (WIN RATE / SALDO R)
 // ══════════════════════════════════════════════════════════════════════════════
 var int   inTrade = 0
-var float posEntry = na
-var float posSL = na
-var float posTP = na
+var float simEntry = na
+var float simSL = na
+var float simTP = na
 var int   wins = 0
 var int   losses = 0
 var float saldoR = 0.0
@@ -246,35 +270,35 @@ var int   totalSignals = 0
 
 if buySignal and inTrade == 0
     inTrade := 1
-    posEntry := close
-    posSL := stopPrice
-    posTP := takeProfit
+    simEntry := close
+    simSL := activeSL
+    simTP := activeTP
     totalSignals += 1
 
 if inTrade == 1
-    if low <= posSL
+    if low <= simSL
         losses += 1
         saldoR -= 1.0
         inTrade := 0
-    else if high >= posTP
+    else if high >= simTP
         wins += 1
-        saldoR += riskReward
+        saldoR += rrRatio
         inTrade := 0
 
 var table hud = table.new(position.top_right, 2, 11, bgcolor=color.new(#0b1220, 15), border_width=1, border_color=color.new(color.gray, 60))
 
 if showHud and barstate.islast
     int totTrades = wins + losses
-    float winRate = totalTrades > 0 ? (100.0 * wins / totalTrades) : 0.0
+    float winRate = totTrades > 0 ? (100.0 * wins / totTrades) : 0.0
     
     table.cell(hud, 0, 0, "CVD DIV FIB", text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 0, marketState == 1 ? "ALTA (Pós-CHoCH)" : "MONITORANDO", text_color=color.yellow, text_size=size.small)
+    table.cell(hud, 1, 0, structureDir == 1 ? "ALTA (Pós-CHoCH)" : "MONITORANDO", text_color=color.yellow, text_size=size.small)
     
     table.cell(hud, 0, 1, "CHoCH", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 1, marketState == 1 ? "▲ alta" : "—", text_color=marketState == 1 ? color.lime : color.silver, text_size=size.small)
+    table.cell(hud, 1, 1, structureDir == 1 ? "▲ alta" : "—", text_color=structureDir == 1 ? color.lime : color.silver, text_size=size.small)
     
     table.cell(hud, 0, 2, "Fibo 50%", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 2, not na(fib50Level) ? "$" + str.tostring(fib50Level, format.mintick) : "—", text_color=color.orange, text_size=size.small)
+    table.cell(hud, 1, 2, not na(fib50) ? "$" + str.tostring(fib50, format.mintick) : "—", text_color=color.orange, text_size=size.small)
     
     table.cell(hud, 0, 3, "Vela ref (barras)", text_color=color.silver, text_size=size.small)
     table.cell(hud, 1, 3, refCandleBar >= 0 ? str.tostring(bar_index - refCandleBar) : "—", text_color=color.white, text_size=size.small)
@@ -283,7 +307,7 @@ if showHud and barstate.islast
     table.cell(hud, 1, 4, refCandleBar >= 0 and not na(refCandleHigh) ? "$" + str.tostring(refCandleHigh, format.mintick) : "—", text_color=color.yellow, text_size=size.small)
     
     table.cell(hud, 0, 5, "Div CVD", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 5, divergenceConfirmed ? "🟢 ALTA CONFIRMADA" : "—", text_color=divergenceConfirmed ? color.lime : color.silver, text_size=size.small)
+    table.cell(hud, 1, 5, divergenceFound ? "🟢 ALTA CONFIRMADA" : "—", text_color=divergenceFound ? color.lime : color.silver, text_size=size.small)
     
     table.cell(hud, 0, 6, "CVD Atual", text_color=color.silver, text_size=size.small)
     table.cell(hud, 1, 6, str.tostring(cvd, "#,###"), text_color=#ff9800, text_size=size.small)
@@ -301,4 +325,4 @@ if showHud and barstate.islast
     table.cell(hud, 1, 10, (saldoR >= 0 ? "+" : "") + str.tostring(saldoR, "#.##") + "R", text_color=saldoR >= 0 ? color.lime : color.red, text_size=size.small)
 
 alertcondition(buySignal, "Compra Fibo 0.5 + CVD", "COMPRA disparada em {{ticker}} @ {{close}} | TP: {{plot_1}} | SL: {{plot_0}}")
-alertcondition(divergenceConfirmed, "Divergência CVD Alta", "Divergência Bullish de CVD detectada em {{ticker}}")
+alertcondition(divergenceFound, "Divergência CVD Alta", "Divergência Bullish de CVD detectada em {{ticker}}")
