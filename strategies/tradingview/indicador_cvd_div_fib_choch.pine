@@ -1,10 +1,10 @@
 //@version=5
-indicator("QuantumFlow: CVD DIV + FIB 0.5 + CHoCH [Eixos Mecânicos Oficiais]", shorttitle="QF CVD DIV FIB [Eixos]", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("QuantumFlow: CVD DIV + FIB 0.5 + CHoCH/BOS [Multi-Ciclos Oficial]", shorttitle="QF CVD DIV FIB [Multi-Ciclos]", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. CONFIGURAÇÕES & PARÂMETROS
 // ══════════════════════════════════════════════════════════════════════════════
-grp_fibo  = "1. Estrutura & Fibonacci"
+grp_fibo  = "1. Estrutura de Mercado & Fibonacci"
 fibTarget = input.float(0.50, "Nível Fibo de Retração (0.50)", minval=0.2, maxval=0.8, step=0.05, group=grp_fibo)
 rrRatio   = input.float(2.0, "Relação Risco:Retorno (Alvo R:R)", step=0.5, group=grp_fibo)
 slBuffer  = input.float(0.10, "Folga de Stop Loss (xATR)", step=0.05, group=grp_fibo)
@@ -16,20 +16,21 @@ cvdHeight = input.float(0.20, "Altura Visual do CVD no Gráfico", minval=0.05, m
 
 grp_vis   = "3. Visualização & HUD"
 showCvd   = input.bool(true, "Exibir Linha Laranja de CVD", group=grp_vis)
-showChoch = input.bool(true, "Exibir Linha e Texto de CHoCH", group=grp_vis)
-showFib   = input.bool(true, "Exibir Linha de 50% de Fibo", group=grp_vis)
+showChoch = input.bool(true, "Exibir Linhas de CHoCH & BOS", group=grp_vis)
+showFib   = input.bool(true, "Exibir Linha de 50% de Fibo da Pernada Atual", group=grp_vis)
 showLines = input.bool(true, "Exibir Linhas do Gatilho & Stop", group=grp_vis)
 showDiv   = input.bool(true, "Exibir Linhas de Divergência", group=grp_vis)
 showHud   = input.bool(true, "Exibir Painel de Métricas (HUD)", group=grp_vis)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 2. CÁLCULO DO CVD REAL (CONTÍNUO E SUAVE - MESMA CURVATURA DO SISTEMA)
+// 2. CÁLCULO DO CVD REAL (SUAVE E CONTÍNUO COM AMORTECIMENTO DE PICOS)
 // ══════════════════════════════════════════════════════════════════════════════
 atr14 = ta.atr(14)
+volSma20 = ta.sma(volume, 20)
 
 [ltfO, ltfC, ltfV] = request.security_lower_tf(syminfo.tickerid, "1", [open, close, volume])
 
-float delta = 0.0
+float rawDelta = 0.0
 int ltfCount = not na(ltfO) ? array.size(ltfO) : 0
 
 if use1mTf and ltfCount > 0
@@ -37,13 +38,17 @@ if use1mTf and ltfCount > 0
         float o = array.get(ltfO, i)
         float c = array.get(ltfC, i)
         float v = array.get(ltfV, i)
-        delta += (c >= o ? v : -v)
+        rawDelta += (c >= o ? v : -v)
 else
     rng = high - low
     pos = rng > 0 ? (close - low) / rng : 0.5
-    delta := close >= open ? volume * (0.5 + 0.5 * pos) : -volume * (0.5 + 0.5 * (1.0 - pos))
+    rawDelta := close >= open ? volume * (0.5 + 0.5 * pos) : -volume * (0.5 + 0.5 * (1.0 - pos))
 
-cvd = ta.cum(delta)
+float maxDelta = volSma20 * 2.5
+float delta = math.max(math.min(rawDelta, maxDelta), -maxDelta)
+
+cvdRaw = ta.cum(delta)
+cvd = ta.ema(cvdRaw, 2)
 
 pxLow = ta.lowest(low, cvdScale)
 pxHigh = ta.highest(high, cvdScale)
@@ -120,34 +125,86 @@ else if swingState == 2
         candExtLowCvd := cvd
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 4. DETECÇÃO DE CHoCH E FIBONACCI 50%
+// 4. ESTRUTURA INSTITUCIONAL CONTÍNUA: CHoCH INICIAL & BOS DAS NOVAS PERNADAS
 // ══════════════════════════════════════════════════════════════════════════════
 var int   structureDir = 0
-var float chochPrice = na
-var int   chochBar = 0
-
-bool chochBullBreak = not na(confirmedTopPrice) and close > confirmedTopPrice and close[1] <= confirmedTopPrice and structureDir <= 0
-if chochBullBreak
-    structureDir := 1
-    chochPrice := confirmedTopPrice
-    chochBar := bar_index
-    if showChoch
-        line.new(confirmedTopBar, confirmedTopPrice, bar_index, confirmedTopPrice, color=color.new(color.white, 20), width=1)
-        label.new(bar_index, confirmedTopPrice, "choch", style=label.style_none, textcolor=color.white, size=size.small)
-
 var float waveOriginLow = na
 var int   waveOriginLowBar = 0
 var float wavePeakHigh = na
 var int   wavePeakHighBar = 0
 var float fib50 = na
 var line  lnFib = na
+var int   waveCycle = 0
 
-if structureDir == 1
-    if na(waveOriginLow) or (bottomJustConfirmed and confirmedBottomBar < chochBar)
-        waveOriginLow := not na(confirmedBottomPrice) ? confirmedBottomPrice : ta.lowest(low, 25)
-        waveOriginLowBar := not na(confirmedBottomBar) ? confirmedBottomBar : bar_index - 10
+bool isChochBull = structureDir <= 0 and not na(confirmedTopPrice) and close > confirmedTopPrice and close[1] <= confirmedTopPrice
+bool isBosBull = structureDir == 1 and not na(wavePeakHigh) and close > wavePeakHigh and close[1] <= wavePeakHigh
 
-    if topJustConfirmed and confirmedTopBar >= chochBar
+var bool tradeFiredWave = false
+var bool divergenceFound = false
+var float dip1Price = na
+var float dip1Cvd = na
+var int   dip1Bar = -1
+var float dip2Price = na
+var float dip2Cvd = na
+var int   dip2Bar = -1
+var float refCandleLow = na
+var float refCandleHigh = na
+var int   refCandleBar = -1
+
+var line lnDivP = na
+var line lnDivC = na
+var line lnTrig = na
+var line lnStop = na
+
+if isChochBull
+    structureDir := 1
+    waveCycle := 1
+    waveOriginLow := not na(confirmedBottomPrice) ? confirmedBottomPrice : ta.lowest(low, 25)
+    waveOriginLowBar := not na(confirmedBottomBar) ? confirmedBottomBar : bar_index - 10
+    wavePeakHigh := high
+    wavePeakHighBar := bar_index
+    fib50 := na
+    line.delete(lnFib)
+    
+    tradeFiredWave := false
+    divergenceFound := false
+    dip1Price := na
+    dip1Bar := -1
+    refCandleLow := na
+    refCandleHigh := na
+    refCandleBar := -1
+    
+    if showChoch
+        line.new(confirmedTopBar, confirmedTopPrice, bar_index, confirmedTopPrice, color=color.new(color.white, 20), width=1)
+        label.new(bar_index, confirmedTopPrice, "choch", style=label.style_none, textcolor=color.white, size=size.small)
+
+if isBosBull
+    waveCycle += 1
+    waveOriginLow := not na(confirmedBottomPrice) ? confirmedBottomPrice : low
+    waveOriginLowBar := not na(confirmedBottomBar) ? confirmedBottomBar : bar_index - 5
+    wavePeakHigh := high
+    wavePeakHighBar := bar_index
+    fib50 := na
+    line.delete(lnFib)
+    
+    tradeFiredWave := false
+    divergenceFound := false
+    dip1Price := na
+    dip1Bar := -1
+    dip2Price := na
+    dip2Bar := -1
+    refCandleLow := na
+    refCandleHigh := na
+    refCandleBar := -1
+    line.delete(lnTrig)
+    line.delete(lnStop)
+    
+    if showChoch
+        line.new(wavePeakHighBar, wavePeakHigh, bar_index, wavePeakHigh, color=color.new(color.yellow, 20), width=1)
+        label.new(bar_index, wavePeakHigh, "bos", style=label.style_none, textcolor=color.yellow, size=size.small)
+
+if structureDir == 1 and not na(waveOriginLow)
+    if topJustConfirmed and confirmedTopBar >= waveOriginLowBar
         wavePeakHigh := confirmedTopPrice
         wavePeakHighBar := confirmedTopBar
         fib50 := wavePeakHigh - (wavePeakHigh - waveOriginLow) * fibTarget
@@ -162,26 +219,8 @@ if structureDir == 1 and not na(waveOriginLow) and low < waveOriginLow
     line.delete(lnFib)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 5. IDENTIFICAÇÃO DOS 2 FUNDOS DO RECUO, DIVERGÊNCIA CVD & GATILHO
+// 5. RETRAÇÃO, DIVERGÊNCIA CVD & GATILHO DA PERNADA ATIVA
 // ══════════════════════════════════════════════════════════════════════════════
-var float dip1Price = na
-var float dip1Cvd = na
-var int   dip1Bar = -1
-
-var float dip2Price = na
-var float dip2Cvd = na
-var int   dip2Bar = -1
-
-var float refCandleLow = na
-var float refCandleHigh = na
-var int   refCandleBar = -1
-
-var bool  divergenceFound = false
-var line  lnDivP = na
-var line  lnDivC = na
-var line  lnTrig = na
-var line  lnStop = na
-
 if structureDir == 1 and not na(fib50) and bar_index > wavePeakHighBar
     if na(dip1Price) and ((bottomJustConfirmed and confirmedBottomPrice > fib50) or (low > fib50 and low[1] < low[2] and low[1] < low))
         dip1Price := not na(confirmedBottomPrice) and confirmedBottomPrice > fib50 ? confirmedBottomPrice : low[1]
@@ -219,23 +258,11 @@ if showLines and refCandleBar >= 0 and (bar_index - refCandleBar <= 30)
 // ══════════════════════════════════════════════════════════════════════════════
 // 6. GATILHO DE EXECUÇÃO EXATO (DISPARO NA CONFIRMAÇÃO DO FUNDO ABAIXO DE 50%)
 // ══════════════════════════════════════════════════════════════════════════════
-var int  lastSignalBar = -100
-var bool tradeFiredWave = false
-
-if chochBullBreak
-    tradeFiredWave := false
-    divergenceFound := false
-    dip1Price := na
-    dip1Bar := -1
-    dip2Price := na
-    dip2Bar := -1
-    refCandleLow := na
-    refCandleHigh := na
-    refCandleBar := -1
+var int lastSignalBar = -100
 
 bool isTriggerViolated = not na(refCandleHigh) and (high > refCandleHigh and high[1] <= refCandleHigh)
 
-bool canBuy = structureDir == 1 and divergenceFound and not tradeFiredWave and refCandleBar >= 0 and (bar_index > refCandleBar) and (bar_index - lastSignalBar >= 8)
+bool canBuy = structureDir == 1 and divergenceFound and not tradeFiredWave and refCandleBar >= 0 and (bar_index > refCandleBar) and (bar_index - lastSignalBar >= 6)
 
 buySignal = canBuy and isTriggerViolated and barstate.isconfirmed
 
@@ -286,44 +313,48 @@ if inTrade == 1
         saldoR += rrRatio
         inTrade := 0
 
-var table hud = table.new(position.top_right, 2, 11, bgcolor=color.new(#0b1220, 15), border_width=1, border_color=color.new(color.gray, 60))
+var table hud = table.new(position.top_right, 2, 12, bgcolor=color.new(#0b1220, 15), border_width=1, border_color=color.new(color.gray, 60))
 
 if showHud and barstate.islast
     int totTrades = wins + losses
     float winRate = totTrades > 0 ? (100.0 * wins / totTrades) : 0.0
     
     table.cell(hud, 0, 0, "CVD DIV FIB", text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 0, structureDir == 1 ? "ALTA (Pós-CHoCH)" : "MONITORANDO", text_color=color.yellow, text_size=size.small)
+    table.cell(hud, 1, 0, structureDir == 1 ? "ONDA #" + str.tostring(waveCycle) + " (ALTA)" : "MONITORANDO", text_color=color.yellow, text_size=size.small)
     
-    table.cell(hud, 0, 1, "CHoCH", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 1, structureDir == 1 ? "▲ alta" : "—", text_color=structureDir == 1 ? color.lime : color.silver, text_size=size.small)
+    table.cell(hud, 0, 1, "Estrutura", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 1, structureDir == 1 ? (waveCycle > 1 ? "▲ BOS CONTINUAÇÃO" : "▲ CHoCH INICIAL") : "—", text_color=color.lime, text_size=size.small)
     
-    table.cell(hud, 0, 2, "Fibo 50%", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 0, 2, "Fibo 50% Atual", text_color=color.silver, text_size=size.small)
     table.cell(hud, 1, 2, not na(fib50) ? "$" + str.tostring(fib50, format.mintick) : "—", text_color=color.orange, text_size=size.small)
     
-    table.cell(hud, 0, 3, "Vela ref (barras)", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 3, refCandleBar >= 0 ? str.tostring(bar_index - refCandleBar) : "—", text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 3, "Origem da Onda", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 3, not na(waveOriginLow) ? "$" + str.tostring(waveOriginLow, format.mintick) : "—", text_color=color.white, text_size=size.small)
+
+    table.cell(hud, 0, 4, "Topo da Onda", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 4, not na(wavePeakHigh) ? "$" + str.tostring(wavePeakHigh, format.mintick) : "—", text_color=color.white, text_size=size.small)
+
+    table.cell(hud, 0, 5, "GATILHO ($)", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 5, refCandleBar >= 0 and not na(refCandleHigh) ? "$" + str.tostring(refCandleHigh, format.mintick) : "—", text_color=color.yellow, text_size=size.small)
     
-    table.cell(hud, 0, 4, "GATILHO ($)", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 4, refCandleBar >= 0 and not na(refCandleHigh) ? "$" + str.tostring(refCandleHigh, format.mintick) : "—", text_color=color.yellow, text_size=size.small)
+    table.cell(hud, 0, 6, "Div CVD", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 6, divergenceFound ? "🟢 ALTA CONFIRMADA" : "—", text_color=divergenceFound ? color.lime : color.silver, text_size=size.small)
     
-    table.cell(hud, 0, 5, "Div CVD", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 5, divergenceFound ? "🟢 ALTA CONFIRMADA" : "—", text_color=divergenceFound ? color.lime : color.silver, text_size=size.small)
+    table.cell(hud, 0, 7, "CVD Atual", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 7, str.tostring(cvd, "#,###"), text_color=#ff9800, text_size=size.small)
     
-    table.cell(hud, 0, 6, "CVD Atual", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 6, str.tostring(cvd, "#,###"), text_color=#ff9800, text_size=size.small)
+    table.cell(hud, 0, 8, "Sinais", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 8, str.tostring(totalSignals), text_color=color.white, text_size=size.small)
     
-    table.cell(hud, 0, 7, "Sinais", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 7, str.tostring(totalSignals), text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 9, "PLACAR W-L", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 9, str.tostring(wins) + "W - " + str.tostring(losses) + "L", text_color=color.white, text_size=size.small)
     
-    table.cell(hud, 0, 8, "PLACAR W-L", text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 8, str.tostring(wins) + "W - " + str.tostring(losses) + "L", text_color=color.white, text_size=size.small)
+    table.cell(hud, 0, 10, "Win Rate", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 10, str.tostring(winRate, "#.1") + "%", text_color=winRate >= 50.0 ? color.lime : color.orange, text_size=size.small)
     
-    table.cell(hud, 0, 9, "Win Rate", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 9, str.tostring(winRate, "#.1") + "%", text_color=winRate >= 50.0 ? color.lime : color.orange, text_size=size.small)
-    
-    table.cell(hud, 0, 10, "Saldo R", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 10, (saldoR >= 0 ? "+" : "") + str.tostring(saldoR, "#.##") + "R", text_color=saldoR >= 0 ? color.lime : color.red, text_size=size.small)
+    table.cell(hud, 0, 11, "Saldo R", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 11, (saldoR >= 0 ? "+" : "") + str.tostring(saldoR, "#.##") + "R", text_color=saldoR >= 0 ? color.lime : color.red, text_size=size.small)
 
 alertcondition(buySignal, "Compra Fibo 0.5 + CVD", "COMPRA disparada em {{ticker}} @ {{close}} | TP: {{plot_1}} | SL: {{plot_0}}")
+alertcondition(isBosBull, "BOS de Alta", "Break of Structure de Alta detectado em {{ticker}} @ {{close}}")
 alertcondition(divergenceFound, "Divergência CVD Alta", "Divergência Bullish de CVD detectada em {{ticker}}")
