@@ -101,3 +101,4 @@ python scripts/test_desktop_strategies.py --benchmark
 ```
 
 A IA que operar este repositório deve ser audaciosa na busca por confluências, mas implacável na rejeição de estratégias com expectativa matemática negativa. Apenas modelos aprovados na matriz de validação devem ser levados para a produção.
+

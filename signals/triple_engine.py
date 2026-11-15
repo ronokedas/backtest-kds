@@ -317,13 +317,37 @@ class TripleConfluenceEngine:
             score_long += 7.0
             reasons_long.append("CVD estabilizado com inclinação positiva")
 
-        # 9. Context H1 & EMA 20 Alignment
+        # 9. Context H1 & EMA 20 Alignment & False-Candle Absorption Check
+        htf_red_absorbed = False
+        htf_green_absorbed = False
         if len(h1_df) >= 3:
             rsi_h1_now = float(h1_df["rsi"].iloc[-1])
             rsi_h1_prev = float(h1_df["rsi"].iloc[-2])
             if rsi_h1_now >= rsi_h1_prev:
                 score_long += 7.0
                 reasons_long.append("Alinhamento favorável de contexto H1")
+
+            # Avaliação de Absorção Institucional em Vela H1 Contrária
+            last_h1 = h1_df.iloc[-1]
+            rng_h1 = max(float(last_h1["high"] - last_h1["low"]), 1e-6)
+            c_h1 = float(last_h1["close"])
+            o_h1 = float(last_h1["open"])
+            l_h1 = float(last_h1["low"])
+            h_h1 = float(last_h1["high"])
+            lower_wick_h1 = (o_h1 - l_h1) if c_h1 < o_h1 else (c_h1 - l_h1)
+            lower_wick_ratio = lower_wick_h1 / rng_h1
+
+            delta_h1 = float(last_h1.get("delta", 0.0))
+            cvd_diff_h1 = float(last_h1.get("cvd", 0.0)) - float(h1_df["cvd"].iloc[-2]) if "cvd" in h1_df else 0.0
+            delta_sum_3_h1 = float(h1_df["delta"].iloc[-3:].sum()) if "delta" in h1_df else 0.0
+            price_change_3_h1 = c_h1 - float(h1_df["close"].iloc[-3])
+
+            # COMPRA: Vela H1 fechou VERMELHA, mas com absorção passiva expressiva
+            if c_h1 < o_h1:
+                if (lower_wick_ratio >= 0.38 and (delta_h1 > 0 or cvd_diff_h1 > 0)) or (delta_sum_3_h1 > 0 and price_change_3_h1 <= 0 and lower_wick_ratio >= 0.30):
+                    htf_red_absorbed = True
+                    score_long += 15.0
+                    reasons_long.append(f"Vela H1 Vermelha com Absorção Passiva: Pavio Inferior {lower_wick_ratio*100:.0f}% e Delta/CVD divergente (Armadilha de Venda)")
 
         if ema_20 > 0 and current_price >= ema_20 * 0.998:
             score_long += 7.0
@@ -440,6 +464,28 @@ class TripleConfluenceEngine:
                 score_short += 20.0
                 reasons_short.extend(oi_data.get("reasons", []))
 
+        # 12. HTF False-Candle Absorption Check (H1 / H4 context for Short)
+        if len(h1_df) >= 3:
+            last_h1 = h1_df.iloc[-1]
+            rng_h1 = max(float(last_h1["high"] - last_h1["low"]), 1e-6)
+            c_h1 = float(last_h1["close"])
+            o_h1 = float(last_h1["open"])
+            h_h1 = float(last_h1["high"])
+            upper_wick_h1 = (h_h1 - c_h1) if c_h1 > o_h1 else (h_h1 - o_h1)
+            upper_wick_ratio = upper_wick_h1 / rng_h1
+
+            delta_h1 = float(last_h1.get("delta", 0.0))
+            cvd_diff_h1 = float(last_h1.get("cvd", 0.0)) - float(h1_df["cvd"].iloc[-2]) if "cvd" in h1_df else 0.0
+            delta_sum_3_h1 = float(h1_df["delta"].iloc[-3:].sum()) if "delta" in h1_df else 0.0
+            price_change_3_h1 = c_h1 - float(h1_df["close"].iloc[-3])
+
+            # VENDA: Vela H1 fechou VERDE, mas com exaustão e absorção vendedora
+            if c_h1 > o_h1:
+                if (upper_wick_ratio >= 0.38 and (delta_h1 < 0 or cvd_diff_h1 < 0)) or (delta_sum_3_h1 < 0 and price_change_3_h1 >= 0 and upper_wick_ratio >= 0.30):
+                    htf_green_absorbed = True
+                    score_short += 15.0
+                    reasons_short.append(f"Vela H1 Verde com Absorção Passiva: Pavio Superior {upper_wick_ratio*100:.0f}% e Delta/CVD divergente (Armadilha de Compra)")
+
         score_short = min(100.0, score_short)
 
         # Decide dominant setup
@@ -518,6 +564,8 @@ class TripleConfluenceEngine:
                 "short_trap": oi_data.get("short_trap_bullish", False) if oi_data else False,
                 "long_trap": oi_data.get("long_trap_bearish", False) if oi_data else False,
                 "oi_change_15m_pct": oi_data.get("oi_change_15m_pct", 0.0) if oi_data else 0.0,
+                "htf_red_absorbed": htf_red_absorbed,
+                "htf_green_absorbed": htf_green_absorbed,
             },
         )
 
