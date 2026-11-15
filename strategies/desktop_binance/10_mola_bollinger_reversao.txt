@@ -1,0 +1,28 @@
+//@version=5
+strategy("Estrategia Efeito Mola Bollinger", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+basis = ta.sma(close, 20)
+dev = 2.0 * ta.stdev(close, 20)
+upperBB = basis + dev
+lowerBB = basis - dev
+rangeCandle = high - low
+pavioInferior = (close > open ? open - low : close - low)
+pavioSuperior = (close > open ? high - close : high - open)
+
+molaAlta = (low < lowerBB) and (close > lowerBB) and (pavioInferior > rangeCandle * 0.45)
+molaBaixa = (high > upperBB) and (close < upperBB) and (pavioSuperior > rangeCandle * 0.45)
+
+var float sl = na
+var float tp = na
+if molaAlta and strategy.position_size == 0
+    sl := low
+    tp := basis
+    strategy.entry("Long Mola", strategy.long)
+    strategy.exit("Exit Long", "Long Mola", stop=sl, limit=tp)
+if molaBaixa and strategy.position_size == 0
+    sl := high
+    tp := basis
+    strategy.entry("Short Mola", strategy.short)
+    strategy.exit("Exit Short", "Short Mola", stop=sl, limit=tp)
+plot(basis, "Basis", color=color.gray)
+plot(upperBB, "Upper", color=color.red)
+plot(lowerBB, "Lower", color=color.green)

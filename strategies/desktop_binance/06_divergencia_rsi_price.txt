@@ -1,0 +1,19 @@
+//@version=5
+strategy("Estrategia Divergencias RSI", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+rsiVal = ta.rsi(close, 14)
+atr = ta.atr(14)
+bullDiv = (low < low[5]) and (rsiVal > rsiVal[5]) and (rsiVal < 35) and (close > open)
+bearDiv = (high > high[5]) and (rsiVal < rsiVal[5]) and (rsiVal > 65) and (close < open)
+
+var float sl = na
+var float tp = na
+if bullDiv and strategy.position_size == 0
+    sl := low - atr * 0.5
+    tp := close + (close - sl) * 2.0
+    strategy.entry("Long Div", strategy.long)
+    strategy.exit("Exit Long", "Long Div", stop=sl, limit=tp)
+if bearDiv and strategy.position_size == 0
+    sl := high + atr * 0.5
+    tp := close - (sl - close) * 2.0
+    strategy.entry("Short Div", strategy.short)
+    strategy.exit("Exit Short", "Short Div", stop=sl, limit=tp)

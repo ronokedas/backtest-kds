@@ -1,0 +1,28 @@
+//@version=5
+strategy("Estrategia 4 EMAs Alinhadas", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+atr = ta.atr(14)
+bullTrend = (ema9 > ema21) and (ema21 > ema50) and (ema50 > ema200)
+bearTrend = (ema9 < ema21) and (ema21 < ema50) and (ema50 < ema200)
+pullbackLong = bullTrend and (low <= ema21) and (close > ema9)
+pullbackShort = bearTrend and (high >= ema21) and (close < ema9)
+
+var float sl = na
+var float tp = na
+if pullbackLong and strategy.position_size == 0
+    sl := close - atr * 1.5
+    tp := close + atr * 2.5
+    strategy.entry("Long 4EMA", strategy.long)
+    strategy.exit("Exit Long", "Long 4EMA", stop=sl, limit=tp)
+if pullbackShort and strategy.position_size == 0
+    sl := close + atr * 1.5
+    tp := close - atr * 2.5
+    strategy.entry("Short 4EMA", strategy.short)
+    strategy.exit("Exit Short", "Short 4EMA", stop=sl, limit=tp)
+plot(ema9, "EMA 9", color=color.green)
+plot(ema21, "EMA 21", color=color.yellow)
+plot(ema50, "EMA 50", color=color.orange)
+plot(ema200, "EMA 200", color=color.blue)

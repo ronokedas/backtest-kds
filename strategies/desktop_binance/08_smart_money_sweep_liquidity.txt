@@ -1,0 +1,24 @@
+//@version=5
+strategy("Estrategia Smart Money Liquidity Sweep", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+lookback = 20
+prevHigh = ta.highest(high[1], lookback)
+prevLow = ta.lowest(low[1], lookback)
+atr = ta.atr(14)
+
+sweepLow = (low < prevLow) and (close > prevLow) and (close > open)
+sweepHigh = (high > prevHigh) and (close < prevHigh) and (close < open)
+
+var float sl = na
+var float tp = na
+if sweepLow and strategy.position_size == 0
+    sl := low - atr * 0.2
+    tp := close + (close - sl) * 2.2
+    strategy.entry("Long Sweep", strategy.long)
+    strategy.exit("Exit Long", "Long Sweep", stop=sl, limit=tp)
+if sweepHigh and strategy.position_size == 0
+    sl := high + atr * 0.2
+    tp := close - (sl - close) * 2.2
+    strategy.entry("Short Sweep", strategy.short)
+    strategy.exit("Exit Short", "Short Sweep", stop=sl, limit=tp)
+plot(prevHigh, "Prev High Liquidity", color=color.red)
+plot(prevLow, "Prev Low Liquidity", color=color.green)

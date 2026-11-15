@@ -1,0 +1,25 @@
+//@version=5
+strategy("Estrategia Euforia e Rejeicao", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+volMA = ta.sma(volume, 20)
+volClimax = volume > volMA * 2.2
+corpo = math.abs(close - open)
+rangeCandle = high - low
+pavioInferior = (close > open ? open - low : close - low)
+pavioSuperior = (close > open ? high - close : high - open)
+
+rejeicaoFundo = volClimax and (pavioInferior > rangeCandle * 0.55) and (close > open)
+rejeicaoTopo = volClimax and (pavioSuperior > rangeCandle * 0.55) and (close < open)
+atr = ta.atr(14)
+
+var float sl = na
+var float tp = na
+if rejeicaoFundo and strategy.position_size == 0
+    sl := low - atr * 0.3
+    tp := close + (close - sl) * 1.8
+    strategy.entry("Long Euforia", strategy.long)
+    strategy.exit("Exit Long", "Long Euforia", stop=sl, limit=tp)
+if rejeicaoTopo and strategy.position_size == 0
+    sl := high + atr * 0.3
+    tp := close - (sl - close) * 1.8
+    strategy.entry("Short Euforia", strategy.short)
+    strategy.exit("Exit Short", "Short Euforia", stop=sl, limit=tp)

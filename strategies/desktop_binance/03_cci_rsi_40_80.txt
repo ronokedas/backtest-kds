@@ -1,0 +1,22 @@
+//@version=5
+strategy("Estrategia CCI + RSI 40-80", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+rsiVal = ta.rsi(close, 14)
+cciVal = ta.cci(close, 20)
+ema50 = ta.ema(close, 50)
+atr = ta.atr(14)
+longSignal = ta.crossover(rsiVal, 40) and (cciVal > -100) and (close > ema50)
+shortSignal = ta.crossunder(rsiVal, 60) and (cciVal < 100) and (close < ema50)
+
+var float sl = na
+var float tp = na
+if longSignal and strategy.position_size == 0
+    sl := close - atr * 1.5
+    tp := close + atr * 2.0
+    strategy.entry("Long CCI-RSI", strategy.long)
+    strategy.exit("Exit Long", "Long CCI-RSI", stop=sl, limit=tp)
+if shortSignal and strategy.position_size == 0
+    sl := close + atr * 1.5
+    tp := close - atr * 2.0
+    strategy.entry("Short CCI-RSI", strategy.short)
+    strategy.exit("Exit Short", "Short CCI-RSI", stop=sl, limit=tp)
+plot(ema50, "EMA 50", color=color.yellow)

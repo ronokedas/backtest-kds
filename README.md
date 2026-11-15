@@ -66,6 +66,38 @@ python run.py --symbol SOLUSDT --min-score 75.0 --rr 2.0
 
 ---
 
+## 🔬 Laboratório de Estratégias Desktop Binance (`strategies/desktop_binance/`)
+
+O repositório inclui as **10 estratégias táticas em Pine Script / Texto** da pasta `strategies/desktop_binance/`, acompanhadas da **Directiva Institucional para IA (`INSTRUCOES_IA_QUANT_RESEARCH.md`)** e do testador quantitativo automatizado (`test_desktop_strategies.py`).
+
+### As 10 Estratégias Disponíveis:
+1. `01_padrao_123_stormer.txt`: Pivô de reversão com filtro de tendência na EMA 100.
+2. `02_quatro_emas_alinhadas.txt`: Continuação de tendência em 4 EMAs (9, 21, 50, 200).
+3. `03_cci_rsi_40_80.txt`: Momentum e cruzamento simultâneo de osciladores.
+4. `04_choch_fibo_618.txt`: Quebra de estrutura (CHoCH) + Retração na Fibo 61.8% + Engolfo.
+5. `05_didi_index_agulhada.txt`: Agulhada do Didi Index clássica com médias 3, 8 e 20.
+6. `06_divergencia_rsi_price.txt`: Divergência clássica entre topos/fundos de preço e RSI.
+7. `07_euforia_rejeicao_volume.txt`: Clímax de volume (> 2.2x média) com pavio de rejeição > 55%.
+8. `08_smart_money_sweep_liquidity.txt`: Varredura de liquidez de 20 períodos com retorno ao range.
+9. `09_mfi_rsi_extremo_reversao.txt`: Exaustão dupla em zonas extremas de sobrevenda/sobrecompra.
+10. `10_mola_bollinger_reversao.txt`: Efeito mola nas Bandas de Bollinger com pavio de rejeição.
+
+### Como a IA / Usuário Testa as Estratégias:
+```bash
+# Testar uma estratégia no modo puro (baseline de varejo):
+python scripts/test_desktop_strategies.py --strategy 08_smart_money_sweep_liquidity
+
+# Testar a MESMA estratégia com Confluências Institucionais (CVD + Volume + Exaustão):
+python scripts/test_desktop_strategies.py --strategy 08_smart_money_sweep_liquidity --confluence
+
+# Executar o Benchmark Comparativo de TODAS as 10 estratégias nos 30 pares:
+python scripts/test_desktop_strategies.py --benchmark
+```
+
+> 📖 **Instruções Detalhadas para IA:** Consulte o arquivo [`strategies/desktop_binance/INSTRUCOES_IA_QUANT_RESEARCH.md`](strategies/desktop_binance/INSTRUCOES_IA_QUANT_RESEARCH.md) para o guia completo de pesquisa quantitativa anti-repaint e busca de alfa.
+
+---
+
 ## 📁 Estrutura do Projeto
 
 ```
@@ -84,8 +116,16 @@ backtest-kds/
 │   ├── market_structure.py    # CHoCH e BOS anti-repaint
 │   ├── volume_profile.py      # POC, VAH, VAL e sweeps
 │   └── oi_tracker.py          # Open Interest traps e desvios
-├── scripts/                   # Scripts auxiliares e calibração
+├── strategies/                # Repositório de Estratégias e Modelos
+│   └── desktop_binance/       # 10 Estratégias Pine Script + Diretivas para IA
+│       ├── INSTRUCOES_IA_QUANT_RESEARCH.md # Diretrizes completas para a IA
+│       ├── 01_padrao_123_stormer.txt
+│       ├── 04_choch_fibo_618.txt
+│       ├── 08_smart_money_sweep_liquidity.txt
+│       └── ... (10 estratégias)
+├── scripts/                   # Scripts auxiliares e de pesquisa
 │   ├── run_massive_backtest.py
+│   ├── test_desktop_strategies.py # Testador quantitativo das estratégias
 │   ├── evaluate_sniper_geometry.py
 │   └── fast_calibrate.py
 ├── run.py                     # Entrypoint principal via linha de comando
@@ -99,3 +139,4 @@ backtest-kds/
 ## ⚖️ Isenção de Responsabilidade (Disclaimer)
 
 Este projeto foi desenvolvido para fins educacionais, de pesquisa quantitativa e uso pessoal em ambiente de demonstração/paper trading. Resultados passados não garantem lucros futuros no mercado de criptoativos e derivativos de alto risco.
+

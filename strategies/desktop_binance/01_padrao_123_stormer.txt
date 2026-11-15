@@ -1,0 +1,27 @@
+//@version=5
+strategy("Estrategia 123 Stormer", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+emaTrend = ta.ema(close, 100)
+c1_low = low[2]
+c2_low = low[1]
+c2_high = high[1]
+fundo123 = (c1_low < low[3]) and (c1_low < c2_low) and (close > c2_high) and (close > emaTrend)
+
+c1_high = high[2]
+c2_high_t = high[1]
+c2_low_t = low[1]
+topo123 = (c1_high > high[3]) and (c1_high > c2_high_t) and (close < c2_low_t) and (close < emaTrend)
+
+atr = ta.atr(14)
+var float sl = na
+var float tp = na
+if fundo123 and strategy.position_size == 0
+    sl := c1_low
+    tp := close + (close - sl) * 1.5
+    strategy.entry("Long 123", strategy.long)
+    strategy.exit("Exit Long", "Long 123", stop=sl, limit=tp)
+if topo123 and strategy.position_size == 0
+    sl := c1_high
+    tp := close - (sl - close) * 1.5
+    strategy.entry("Short 123", strategy.short)
+    strategy.exit("Exit Short", "Short 123", stop=sl, limit=tp)
+plot(emaTrend, "EMA Trend", color=color.blue)

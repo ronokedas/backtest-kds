@@ -1,0 +1,20 @@
+//@version=5
+strategy("Estrategia MFI + RSI Reversao Extrema", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+mfiVal = ta.mfi(hlc3, 14)
+rsiVal = ta.rsi(close, 14)
+atr = ta.atr(14)
+superOversold = (mfiVal < 20) and (rsiVal < 25) and (close > open)
+superOverbought = (mfiVal > 80) and (rsiVal > 75) and (close < open)
+
+var float sl = na
+var float tp = na
+if superOversold and strategy.position_size == 0
+    sl := low - atr * 0.5
+    tp := close + (close - sl) * 1.8
+    strategy.entry("Long Reversao", strategy.long)
+    strategy.exit("Exit Long", "Long Reversao", stop=sl, limit=tp)
+if superOverbought and strategy.position_size == 0
+    sl := high + atr * 0.5
+    tp := close - (sl - close) * 1.8
+    strategy.entry("Short Reversao", strategy.short)
+    strategy.exit("Exit Short", "Short Reversao", stop=sl, limit=tp)

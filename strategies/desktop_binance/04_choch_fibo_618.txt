@@ -1,0 +1,24 @@
+//@version=5
+strategy("Estrategia CHoCH + Fibo 61.8", overlay=true, default_qty_type=strategy.cash, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+hh = ta.highest(high[1], 20)
+ll = ta.lowest(low[1], 20)
+fibo618_long = ll + (hh - ll) * 0.618
+fibo618_short = hh - (hh - ll) * 0.618
+isEngulfLong = (close > open) and (close[1] < open[1]) and (close >= open[1]) and (open <= close[1])
+isEngulfShort = (close < open) and (close[1] > open[1]) and (close <= open[1]) and (open >= close[1])
+
+longSignal = (close > hh[5]) and (low <= fibo618_long) and isEngulfLong
+shortSignal = (close < ll[5]) and (high >= fibo618_short) and isEngulfShort
+atr = ta.atr(14)
+var float sl = na
+var float tp = na
+if longSignal and strategy.position_size == 0
+    sl := low - atr * 0.5
+    tp := close + (close - sl) * 2.0
+    strategy.entry("Long CHoCH", strategy.long)
+    strategy.exit("Exit Long", "Long CHoCH", stop=sl, limit=tp)
+if shortSignal and strategy.position_size == 0
+    sl := high + atr * 0.5
+    tp := close - (sl - close) * 2.0
+    strategy.entry("Short CHoCH", strategy.short)
+    strategy.exit("Exit Short", "Short CHoCH", stop=sl, limit=tp)
