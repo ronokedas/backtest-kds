@@ -1,0 +1,93 @@
+absorption:
+  m15_choch_confirmation: true
+  retest_tolerance_pct: 0.2
+  rvol_min: 1.5
+  zscore_delta_threshold: 2.0
+  zscore_price_progress_max: -0.5
+binance:
+  futures_usdm:
+    rest_url: https://fapi.binance.com
+    ws_stream_url: wss://fstream.binance.com/stream
+    ws_url: wss://fstream.binance.com/ws
+  max_clock_skew_ms: 2000
+  max_retries: 3
+  rate_limit_pause_seconds: 1.0
+  request_timeout_seconds: 10
+  spot:
+    rest_url: https://api.binance.com
+    ws_stream_url: wss://stream.binance.com:9443/stream
+    ws_url: wss://stream.binance.com:9443/ws
+filters:
+  cooldown_minutes: 20
+  deduplicate_zones: true
+  min_trades_per_minute: 100
+notifications:
+  whatsapp:
+    api_url: http://localhost:3001/send-message
+    enabled: true
+    min_score: 70.0
+    notify_on:
+      confirmed_reversal: true
+      potential_absorption: true
+      pre_alert: false
+    phone_number: '5591989340275'
+scoring:
+  thresholds:
+    confirmed_alert_min: 85
+    no_signal_max: 39
+    observation_min: 40
+    potential_absorption_min: 70
+    pre_alert_min: 55
+  weights:
+    cvd_delta: 15
+    h1_h4_confirmation: 10
+    inefficiency_flux: 25
+    m15_structure: 15
+    oi_liquidations: 10
+    price_response: 15
+    structural_zone: 5
+    volume_liquidity: 5
+system:
+  log_level: INFO
+  name: Binance Real Absorption Detector
+  paper_mode: true
+  timezone: UTC
+  version: 1.0.0
+timeframes:
+  macro: 1d
+  major_structure: 4h
+  microstructure: 1m
+  refinement: 5m
+  trend_confirmation: 1h
+  trigger_structure: 15m
+universe:
+  default_market: futures_usdm
+  max_spread_pct: 0.05
+  min_volume_24h_usd: 20000000.0
+  priority_symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - NEARUSDT
+  - 1000PEPEUSDT
+  - XRPUSDT
+  - HYPEUSDT
+  - BNBUSDT
+  quote_assets:
+  - USDT
+  - USDC
+
+volume_profile:
+  lookback: 150
+  rows: 24
+  va_percent: 70.0
+
+oi_tracker:
+  enabled: true
+  surge_15m_threshold_pct: 1.2
+  surge_60m_threshold_pct: 2.5
+
+ai_gatekeeper:
+  enabled: true
+  model: gemini-2.5-flash
+  min_confidence: 70.0
