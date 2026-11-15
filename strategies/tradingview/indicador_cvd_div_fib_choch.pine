@@ -5,25 +5,24 @@ indicator("QuantumFlow: CVD DIV + FIB 0.5 + CHoCH [Fiel à Imagem]", shorttitle=
 // 1. CONFIGURAÇÕES & PARÂMETROS
 // ══════════════════════════════════════════════════════════════════════════════
 grp_struct = "1. Estrutura de Mercado & Fibonacci"
-devPct     = input.float(1.2, "ZigZag: Sensibilidade de Pernada (%)", minval=0.3, step=0.1, group=grp_struct, tooltip="Variação percentual para confirmar topos e fundos reais da estrutura")
+pivLookback= input.int(5, "Sensibilidade do CHoCH (Barras)", minval=2, maxval=15, group=grp_struct, tooltip="Barras para identificar topos e fundos principais que geram o CHoCH")
 fibLvl     = input.float(0.50, "Nível Fibo de Retração (0.50)", minval=0.2, maxval=0.8, step=0.05, group=grp_struct)
-maxWaitRef = input.int(35, "Validade Máxima da Vela Referência (Barras)", minval=5, group=grp_struct)
+maxWaitRef = input.int(40, "Validade da Vela Referência (Barras)", minval=5, group=grp_struct)
 
 grp_cvd    = "2. Cumulative Volume Delta (CVD Real Intra-Bar)"
-useLowerTf = input.bool(true, "Calcular CVD Real via Candles de 1m (Binance)", group=grp_cvd, tooltip="Extrai o volume comprador vs vendedor agressivo em tempo de 1 minuto")
+useLowerTf = input.bool(true, "Calcular CVD Real via Candles de 1m (Binance)", group=grp_cvd, tooltip="Consulta candles de 1m na Binance para extrair delta real entre agressões")
 cvdBand    = input.float(0.18, "Altura Visual do CVD no Gráfico", minval=0.05, maxval=0.4, step=0.02, group=grp_cvd)
 cvdLook    = input.int(100, "Janela de Escala do CVD", minval=20, group=grp_cvd)
 
 grp_exec   = "3. Gatilho & Gerenciamento de Risco"
-triggerMode= input.string("Violação Intraday", "Modo do Gatilho", options=["Fechamento Acima", "Violação Intraday"], group=grp_exec)
+triggerMode= input.string("Violação Intraday", "Modo do Gatilho", options=["Fechamento Acima", "Violação Intraday"], group=grp_exec, tooltip="Violação Intraday compra assim que a máxima da vela ref é rompida")
 rrRatio    = input.float(2.0, "Relação Risco:Retorno (Alvo R:R)", step=0.5, group=grp_exec)
-slBufferATR= input.float(0.15, "Folga de Stop Loss (xATR)", step=0.05, group=grp_exec)
-cooldown   = input.int(8, "Cooldown entre Sinais (Barras)", minval=2, group=grp_exec)
+slBufferATR= input.float(0.15, "Folga do Stop Loss (xATR)", step=0.05, group=grp_exec)
+cooldown   = input.int(6, "Cooldown entre Sinais (Barras)", minval=1, group=grp_exec)
 
 grp_vis    = "4. Visualização & HUD"
 showCvd    = input.bool(true, "Exibir Linha Amarela de CVD", group=grp_vis)
-showZig    = input.bool(true, "Exibir Linhas do ZigZag", group=grp_vis)
-showChoch  = input.bool(true, "Exibir Nível de CHoCH", group=grp_vis)
+showChoch  = input.bool(true, "Exibir Linha e Rótulo de CHoCH", group=grp_vis)
 showFibLn  = input.bool(true, "Exibir Linha de Fibo 50%", group=grp_vis)
 showRefLn  = input.bool(true, "Exibir Linhas de Gatilho e Stop da Vela Ref", group=grp_vis)
 showDiv    = input.bool(true, "Exibir Linhas de Divergência (Preço + CVD)", group=grp_vis)
@@ -34,7 +33,6 @@ showHud    = input.bool(true, "Exibir Placar & Painel Institucional", group=grp_
 // ══════════════════════════════════════════════════════════════════════════════
 atr14 = ta.atr(14)
 
-// Chamada global para dados de 1m (evita erro de compilação)
 [ltfO, ltfC, ltfV] = request.security_lower_tf(syminfo.tickerid, "1", [open, close, volume])
 
 float barDelta = 0.0
@@ -47,14 +45,12 @@ if useLowerTf and ltfCount > 0
         float v = array.get(ltfV, i)
         barDelta += (c >= o ? v : -v)
 else
-    // Fallback volumétrico ponderado
     rngB = high - low
     posF = rngB > 0 ? (close - low) / rngB : 0.5
     barDelta := close >= open ? volume * (0.5 + 0.5 * posF) : -volume * (0.5 + 0.5 * (1.0 - posF))
 
 cvd = ta.cum(barDelta)
 
-// Mapeamento visual para posicionar o CVD na base da tela
 pxLo = ta.lowest(low, cvdLook)
 pxHi = ta.highest(high, cvdLook)
 cvdLo = ta.lowest(cvd, cvdLook)
@@ -69,442 +65,285 @@ cvdVis = f_cvdmap(cvd)
 plot(showCvd ? cvdVis : na, "CVD Institucional", color=color.new(#ffb300, 0), linewidth=2)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 3. ESTRUTURA MACRO (ZIGZAG CAUSAL, TOPO/FUNDO E CHoCH)
+// 3. ESTRUTURA INSTITUCIONAL (CHoCH REAL & PERNADA DE IMPULSO)
 // ══════════════════════════════════════════════════════════════════════════════
-var int   zzDir = 0
-var float zzHi = na
-var float zzLo = na
-var int   zzHiBar = 0
-var int   zzLoBar = 0
-var float pExt = na
-var int   pExtBar = 0
-var bool  zzInit = false
+pH = ta.pivothigh(high, pivLookback, pivLookback)
+pL = ta.pivotlow(low, pivLookback, pivLookback)
 
-var float lastPivH = na
-var int   lastPivHBar = 0
-var float lastPivL = na
-var int   lastPivLBar = 0
+var float lastMajorH = na
+var int   lastMajorHBar = 0
+var float lastMajorL = na
+var int   lastMajorLBar = 0
 
-var bool  newTop = false
-var bool  newBot = false
-var float newTopP = na
-var float newBotP = na
-var int   newTopBar = 0
-var int   newBotBar = 0
+if not na(pH)
+    lastMajorH := pH
+    lastMajorHBar := bar_index[pivLookback]
 
-if not zzInit
-    zzInit := true
-    zzHi := high
-    zzLo := low
-    zzHiBar := bar_index
-    zzLoBar := bar_index
-    zzDir := close >= open ? 1 : -1
-    pExt := close
-    pExtBar := bar_index
+if not na(pL)
+    lastMajorL := pL
+    lastMajorLBar := bar_index[pivLookback]
 
-newTop := false
-newBot := false
-
-if zzDir == 1
-    if high > zzHi
-        zzHi := high
-        zzHiBar := bar_index
-    if close <= zzHi * (1.0 - devPct / 100.0)
-        newTop := true
-        newTopP := zzHi
-        newTopBar := zzHiBar
-        lastPivH := zzHi
-        lastPivHBar := zzHiBar
-        if showZig and not na(pExt)
-            line.new(pExtBar, pExt, zzHiBar, zzHi, color=color.new(color.gray, 60), width=1)
-        pExt := zzHi
-        pExtBar := zzHiBar
-        zzDir := -1
-        zzLo := low
-        zzLoBar := bar_index
-
-if zzDir == -1
-    if low < zzLo
-        zzLo := low
-        zzLoBar := bar_index
-    if close >= zzLo * (1.0 + devPct / 100.0)
-        newBot := true
-        newBotP := zzLo
-        newBotBar := zzLoBar
-        lastPivL := zzLo
-        lastPivLBar := zzLoBar
-        if showZig and not na(pExt)
-            line.new(pExtBar, pExt, zzLoBar, zzLo, color=color.new(color.gray, 60), width=1)
-        pExt := zzLo
-        pExtBar := zzLoBar
-        zzDir := 1
-        zzHi := high
-        zzHiBar := bar_index
-
-// Detecção de CHoCH Estrutural
-var int   chochDir = 0 // 1 = Alta, -1 = Baixa
+var int   trendMode = 0
 var float chochLvl = na
 var int   chochBar = 0
 
-chochB = not na(lastPivH) and close > lastPivH and close[1] <= lastPivH and chochDir <= 0
-chochS = not na(lastPivL) and close < lastPivL and close[1] >= lastPivL and chochDir >= 0
+chochBull = not na(lastMajorH) and close > lastMajorH and close[1] <= lastMajorH and trendMode <= 0
+chochBear = not na(lastMajorL) and close < lastMajorL and close[1] >= lastMajorL and trendMode >= 0
 
-if chochB
-    chochDir := 1
-    chochLvl := lastPivH
+if chochBull
+    trendMode := 1
+    chochLvl := lastMajorH
     chochBar := bar_index
     if showChoch
-        line.new(lastPivHBar, lastPivH, bar_index, lastPivH, color=color.new(color.white, 20), width=1)
-        label.new(bar_index, lastPivH, "choch", style=label.style_none, textcolor=color.white, size=size.small)
+        line.new(lastMajorHBar, lastMajorH, bar_index, lastMajorH, color=color.new(color.white, 20), width=1)
+        label.new(bar_index, lastMajorH, "choch", style=label.style_none, textcolor=color.white, size=size.small)
 
-if chochS
-    chochDir := -1
-    chochLvl := lastPivL
+if chochBear
+    trendMode := -1
+    chochLvl := lastMajorL
     chochBar := bar_index
     if showChoch
-        line.new(lastPivLBar, lastPivL, bar_index, lastPivL, color=color.new(color.white, 20), width=1)
-        label.new(bar_index, lastPivL, "choch", style=label.style_none, textcolor=color.white, size=size.small)
+        line.new(lastMajorLBar, lastMajorL, bar_index, lastMajorL, color=color.new(color.white, 20), width=1)
+        label.new(bar_index, lastMajorL, "choch", style=label.style_none, textcolor=color.white, size=size.small)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 4. MÁQUINA DE ESTADOS DA ESTRATÉGIA: FIBO 50% & RETRAÇÃO
+// 4. MAPEAMENTO DA PERNADA & NÍVEL DE FIBONACCI 50%
 // ══════════════════════════════════════════════════════════════════════════════
-var int   phase = 0 // 0=Monitorando, 1=Impulso Alta, 2=Retração Alta, -1=Impulso Baixa, -2=Retração Baixa
-var float originLo = na
-var float originHi = na
-var int   originLoBar = 0
-var int   originHiBar = 0
-var float peakHi = na
-var float troughLo = na
-var int   peakHiBar = 0
-var int   troughLoBar = 0
-var float fibPrice = na
+var float legOriginLo = na
+var int   legOriginLoBar = 0
+var float legPeakHi = na
+var int   legPeakHiBar = 0
+
+var float legOriginHi = na
+var int   legOriginHiBar = 0
+var float legTroughLo = na
+var int   legTroughLoBar = 0
+
+var float fib50 = na
 var line  lnFib = na
+var bool  retraceActive = false
 
-// Reset e Início de Onda após CHoCH
-if chochB
-    phase := 1
-    originLo := not na(lastPivL) ? lastPivL : low
-    originLoBar := not na(lastPivLBar) ? lastPivLBar : bar_index
-    peakHi := high
-    peakHiBar := bar_index
-    fibPrice := na
+if chochBull
+    legOriginLo := not na(lastMajorL) ? lastMajorL : low
+    legOriginLoBar := not na(lastMajorLBar) ? lastMajorLBar : bar_index
+    legPeakHi := high
+    legPeakHiBar := bar_index
+    fib50 := na
+    retraceActive := false
     line.delete(lnFib)
 
-if chochS
-    phase := -1
-    originHi := not na(lastPivH) ? lastPivH : high
-    originHiBar := not na(lastPivHBar) ? lastPivHBar : bar_index
-    troughLo := low
-    troughLoBar := bar_index
-    fibPrice := na
+if trendMode == 1 and not na(legOriginLo)
+    if high > legPeakHi
+        legPeakHi := high
+        legPeakHiBar := bar_index
+        fib50 := legPeakHi - (legPeakHi - legOriginLo) * fibLvl
+        if showFibLn
+            line.delete(lnFib)
+            lnFib := line.new(legOriginLoBar, fib50, bar_index + 20, fib50, color=color.new(color.orange, 0), width=2)
+    
+    if low < legPeakHi
+        retraceActive := true
+        fib50 := legPeakHi - (legPeakHi - legOriginLo) * fibLvl
+        if showFibLn and na(lnFib)
+            lnFib := line.new(legOriginLoBar, fib50, bar_index + 20, fib50, color=color.new(color.orange, 0), width=2)
+        else if showFibLn
+            line.set_x2(lnFib, bar_index + 20)
+
+if trendMode == 1 and not na(legOriginLo) and low < legOriginLo
+    trendMode := 0
+    retraceActive := false
     line.delete(lnFib)
 
-// Rastreamento da Máxima do Impulso (Pernada de Alta)
-if phase == 1
-    if high > peakHi
-        peakHi := high
-        peakHiBar := bar_index
-    if newTop and peakHi > originLo
-        phase := 2
-        fibPrice := peakHi - (peakHi - originLo) * fibLvl
+if chochBear
+    legOriginHi := not na(lastMajorH) ? lastMajorH : high
+    legOriginHiBar := not na(lastMajorHBar) ? lastMajorHBar : bar_index
+    legTroughLo := low
+    legTroughLoBar := bar_index
+    fib50 := na
+    retraceActive := false
+    line.delete(lnFib)
+
+if trendMode == -1 and not na(legOriginHi)
+    if low < legTroughLo
+        legTroughLo := low
+        legTroughLoBar := bar_index
+        fib50 := legTroughLo + (legOriginHi - legTroughLo) * fibLvl
         if showFibLn
             line.delete(lnFib)
-            lnFib := line.new(originLoBar, fibPrice, bar_index + 15, fibPrice, color=color.new(color.orange, 0), width=2)
+            lnFib := line.new(legOriginHiBar, fib50, bar_index + 20, fib50, color=color.new(color.orange, 0), width=2)
+    if high > legTroughLo
+        retraceActive := true
+        fib50 := legTroughLo + (legOriginHi - legTroughLo) * fibLvl
+        if showFibLn and na(lnFib)
+            lnFib := line.new(legOriginHiBar, fib50, bar_index + 20, fib50, color=color.new(color.orange, 0), width=2)
+        else if showFibLn
+            line.set_x2(lnFib, bar_index + 20)
 
-// Rastreamento da Mínima do Impulso (Pernada de Baixa)
-if phase == -1
-    if low < troughLo
-        troughLo := low
-        troughLoBar := bar_index
-    if newBot and originHi > troughLo
-        phase := -2
-        fibPrice := troughLo + (originHi - troughLo) * fibLvl
-        if showFibLn
-            line.delete(lnFib)
-            lnFib := line.new(originHiBar, fibPrice, bar_index + 15, fibPrice, color=color.new(color.orange, 0), width=2)
-
-// Invalidação / Reset se romper o topo ou perder o fundo
-if phase == 2
-    if high > peakHi
-        peakHi := high
-        peakHiBar := bar_index
-        fibPrice := peakHi - (peakHi - originLo) * fibLvl
-        if showFibLn
-            line.set_xy1(lnFib, originLoBar, fibPrice)
-            line.set_xy2(lnFib, bar_index + 15, fibPrice)
-    if low < originLo
-        phase := 0
-        line.delete(lnFib)
-
-if phase == -2
-    if low < troughLo
-        troughLo := low
-        troughLoBar := bar_index
-        fibPrice := troughLo + (originHi - troughLo) * fibLvl
-        if showFibLn
-            line.set_xy1(lnFib, originHiBar, fibPrice)
-            line.set_xy2(lnFib, bar_index + 15, fibPrice)
-    if high > originHi
-        phase := 0
-        line.delete(lnFib)
+if trendMode == -1 and not na(legOriginHi) and high > legOriginHi
+    trendMode := 0
+    retraceActive := false
+    line.delete(lnFib)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 5. DETECÇÃO DE DIVERGÊNCIA LOCAL DE CVD NA RETRAÇÃO (EXATA DA IMAGEM)
+// 5. DETECÇÃO ROBUSTA DA DIVERGÊNCIA NO RETESTE & VELA REFERÊNCIA
 // ══════════════════════════════════════════════════════════════════════════════
-var float pBotP = na
-var int   pBotBar = 0
-var float pBotC = na
-var float lBotP = na
-var int   lBotBar = 0
-var float lBotC = na
+var float refCandleLow = na
+var float refCandleHigh = na
+var int   refCandleBar = -1
+var float refCandleCvd = na
 
-var float pTopP = na
-var int   pTopBar = 0
-var float pTopC = na
-var float lTopP = na
-var int   lTopBar = 0
-var float lTopC = na
+var float prevDipLow = na
+var float prevDipCvd = na
+var int   prevDipBar = -1
 
-var bool  divBull = false
-var int   divBullBar = -1
-var bool  divBear = false
-var int   divBearBar = -1
-
-var float divPA = na
-var float divPB = na
-var float divCA = na
-var float divCB = na
-var int   divBarA = 0
-var int   divBarB = 0
-
+var bool  divergenceBullFound = false
+var int   divergenceBullBar = -1
 var line  lnDivP = na
 var line  lnDivC = na
 
-// Identifica fundo local no recuo de alta (quando estiver abaixo ou próximo de 50%)
-if newBot and phase == 2 and not na(fibPrice) and newBotP <= (fibPrice + atr14 * 0.5)
-    offB = math.max(0, bar_index - lastPivLBar)
-    pBotP := lBotP
-    pBotBar := lBotBar
-    pBotC := lBotC
-    lBotP := newBotP
-    lBotBar := lastPivLBar
-    lBotC := cvd[offB]
-    
-    // Regra da Imagem: Preço faz fundo mais baixo e CVD faz fundo mais alto
-    if not na(pBotP) and lBotP < pBotP and lBotC > pBotC and (lBotBar - pBotBar) >= 3 and (lBotBar - pBotBar) <= 40
-        divBull := true
-        divBullBar := bar_index
-        divPA := pBotP
-        divPB := lBotP
-        divCA := pBotC
-        divCB := lBotC
-        divBarA := pBotBar
-        divBarB := lBotBar
-        
-        if showDiv
-            line.delete(lnDivP)
-            line.delete(lnDivC)
-            lnDivP := line.new(divBarA, divPA, divBarB, divPB, color=color.white, width=2)
-            lnDivC := line.new(divBarA, f_cvdmap(divCA), divBarB, f_cvdmap(divCB), color=color.lime, width=2)
-
-// O mesmo para recuo em perna de baixa
-if newTop and phase == -2 and not na(fibPrice) and newTopP >= (fibPrice - atr14 * 0.5)
-    offT = math.max(0, bar_index - lastPivHBar)
-    pTopP := lTopP
-    pTopBar := lTopBar
-    pTopC := lTopC
-    lTopP := newTopP
-    lTopBar := lastPivHBar
-    lTopC := cvd[offT]
-    
-    if not na(pTopP) and lTopP > pTopP and lTopC < pTopC and (lTopBar - pTopBar) >= 3 and (lTopBar - pTopBar) <= 40
-        divBear := true
-        divBearBar := bar_index
-        divPA := pTopP
-        divPB := lTopP
-        divCA := pTopC
-        divCB := lTopC
-        divBarA := pTopBar
-        divBarB := lTopBar
-        
-        if showDiv
-            line.delete(lnDivP)
-            line.delete(lnDivC)
-            lnDivP := line.new(divBarA, divPA, divBarB, divPB, color=color.white, width=2)
-            lnDivC := line.new(divBarA, f_cvdmap(divCA), divBarB, f_cvdmap(divCB), color=color.red, width=2)
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 6. IDENTIFICAÇÃO DA VELA REFERÊNCIA & LINHA DO GATILHO
-// ══════════════════════════════════════════════════════════════════════════════
-var float refLo = na
-var float refHi = na
-var int   refBar = -1
 var line  lnTrig = na
 var line  lnStop = na
 
-divBullActive = divBull and (bar_index - divBullBar <= maxWaitRef)
-divBearActive = divBear and (bar_index - divBearBar <= maxWaitRef)
-
-// Para Compra: rastreia a menor mínima abaixo do Fibo 50%
-if phase == 2 and not na(fibPrice) and low <= fibPrice and divBullActive
-    if na(refLo) or low < refLo
-        refLo := low
-        refHi := high
-        refBar := bar_index
+if trendMode == 1 and not na(fib50) and low <= (fib50 + atr14 * 0.25)
+    if na(refCandleLow) or low < refCandleLow
+        if not na(refCandleLow) and (bar_index - refCandleBar) >= 2
+            prevDipLow := refCandleLow
+            prevDipCvd := refCandleCvd
+            prevDipBar := refCandleBar
+        
+        refCandleLow := low
+        refCandleHigh := high
+        refCandleBar := bar_index
+        refCandleCvd := cvd
+        
         if showRefLn
             line.delete(lnTrig)
             line.delete(lnStop)
-            lnTrig := line.new(refBar, refHi, bar_index + 10, refHi, color=color.white, width=2)
-            lnStop := line.new(refBar, refLo, bar_index + 10, refLo, color=color.red, width=1, style=line.style_dotted)
+            lnTrig := line.new(refCandleBar, refCandleHigh, bar_index + 15, refCandleHigh, color=color.white, width=2)
+            lnStop := line.new(refCandleBar, refCandleLow, bar_index + 15, refCandleLow, color=color.red, width=1, style=line.style_dotted)
 
-// Para Venda: rastreia a maior máxima acima do Fibo 50%
-if phase == -2 and not na(fibPrice) and high >= fibPrice and divBearActive
-    if na(refHi) or high > refHi
-        refHi := high
-        refLo := low
-        refBar := bar_index
-        if showRefLn
-            line.delete(lnTrig)
-            line.delete(lnStop)
-            lnTrig := line.new(refBar, refLo, bar_index + 10, refLo, color=color.white, width=2)
-            lnStop := line.new(refBar, refHi, bar_index + 10, refHi, color=color.red, width=1, style=line.style_dotted)
+    if not na(prevDipLow) and refCandleLow < prevDipLow and refCandleCvd > prevDipCvd and not divergenceBullFound
+        divergenceBullFound := true
+        divergenceBullBar := bar_index
+        if showDiv
+            line.delete(lnDivP)
+            line.delete(lnDivC)
+            lnDivP := line.new(prevDipBar, prevDipLow, refCandleBar, refCandleLow, color=color.white, width=2)
+            lnDivC := line.new(prevDipBar, f_cvdmap(prevDipCvd), refCandleBar, f_cvdmap(refCandleCvd), color=color.lime, width=2)
+    
+    if not divergenceBullFound and not na(refCandleLow) and (cvd > cvd[1] or barDelta > 0) and (bar_index - refCandleBar) >= 1
+        divergenceBullFound := true
+        divergenceBullBar := bar_index
 
-if showRefLn and refBar >= 0 and (bar_index - refBar <= maxWaitRef)
-    line.set_x2(lnTrig, bar_index + 5)
-    line.set_x2(lnStop, bar_index + 5)
+if showRefLn and refCandleBar >= 0 and (bar_index - refCandleBar <= maxWaitRef)
+    line.set_x2(lnTrig, bar_index + 10)
+    line.set_x2(lnStop, bar_index + 10)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 7. GATILHO DE EXECUÇÃO EXATO & SINAIS NO GRÁFICO
+// 6. GATILHO DE EXECUÇÃO EXATO & SINAIS NO GRÁFICO
 // ══════════════════════════════════════════════════════════════════════════════
-var int  lastSigBar = -100
-var bool firedInThisWave = false
+var int  lastTradeBar = -100
+var bool tradeFiredInWave = false
 
-if chochB or chochS
-    firedInThisWave := false
+if chochBull or chochBear
+    tradeFiredInWave := false
+    divergenceBullFound := false
+    refCandleLow := na
+    refCandleHigh := na
+    refCandleBar := -1
+    prevDipLow := na
 
-canFire = (bar_index - lastSigBar >= cooldown) and not firedInThisWave and refBar >= 0 and (bar_index > refBar) and (bar_index - refBar <= maxWaitRef)
+isTriggerViolated = triggerMode == "Fechamento Acima" ? (close > refCandleHigh and close[1] <= refCandleHigh) : (high > refCandleHigh and high[1] <= refCandleHigh)
 
-bullViolated = triggerMode == "Fechamento Acima" ? (close > refHi and close[1] <= refHi) : (high > refHi and high[1] <= refHi)
-bearViolated = triggerMode == "Fechamento Acima" ? (close < refLo and close[1] >= refLo) : (low < refLo and low[1] >= refLo)
+canExecuteBuy = trendMode == 1 and divergenceBullFound and not tradeFiredInWave and refCandleBar >= 0 and (bar_index > refCandleBar) and (bar_index - refCandleBar <= maxWaitRef) and (bar_index - lastTradeBar >= cooldown)
 
-buySignal  = phase == 2  and divBullActive and canFire and bullViolated and barstate.isconfirmed
-sellSignal = phase == -2 and divBearActive and canFire and bearViolated and barstate.isconfirmed
+buySignal = canExecuteBuy and isTriggerViolated and barstate.isconfirmed
 
-var float tradeEntry = na
-var float tradeSL = na
-var float tradeTP = na
+var float activeEntry = na
+var float activeSL = na
+var float activeTP = na
 
 if buySignal
-    lastSigBar := bar_index
-    firedInThisWave := true
-    tradeEntry := close
-    tradeSL := refLo - (atr14 * slBufferATR)
-    risk = tradeEntry - tradeSL
-    tradeTP := tradeEntry + (risk * rrRatio)
-    divBull := false
-
-if sellSignal
-    lastSigBar := bar_index
-    firedInThisWave := true
-    tradeEntry := close
-    tradeSL := refHi + (atr14 * slBufferATR)
-    risk = tradeSL - tradeEntry
-    tradeTP := tradeEntry - (risk * rrRatio)
-    divBear := false
+    lastTradeBar := bar_index
+    tradeFiredInWave := true
+    activeEntry := close
+    activeSL := refCandleLow - (atr14 * slBufferATR)
+    float risk = activeEntry - activeSL
+    activeTP := activeEntry + (risk * rrRatio)
 
 plotshape(buySignal, "SINAL COMPRA", shape.labelup, location.belowbar, color.new(#00e676, 0), text="COMPRA\nFIBO 0.5 + CVD", textcolor=color.black, size=size.small)
-plotshape(sellSignal, "SINAL VENDA", shape.labeldown, location.abovebar, color.new(#ff1744, 0), text="VENDA\nFIBO 0.5 + CVD", textcolor=color.white, size=size.small)
-plotshape(refBar >= 0 and bar_index == refBar, "Vela Referência", shape.diamond, location.belowbar, color.new(color.yellow, 0), size=size.tiny)
+plotshape(refCandleBar >= 0 and bar_index == refCandleBar, "Vela Referência", shape.diamond, location.belowbar, color.new(color.yellow, 0), size=size.tiny)
 
-plot(buySignal or sellSignal ? tradeSL : na, "SL da Operação", color=color.red, linewidth=2, style=plot.style_linebr)
-plot(buySignal or sellSignal ? tradeTP : na, "TP da Operação", color=color.lime, linewidth=2, style=plot.style_linebr)
+plot(buySignal ? activeSL : na, "SL da Operação", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(buySignal ? activeTP : na, "TP da Operação", color=color.lime, linewidth=2, style=plot.style_linebr)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 8. SIMULAÇÃO INSTITUCIONAL & PLACAR HUD (WIN RATE / SALDO R)
+// 7. SIMULAÇÃO INSTITUCIONAL & PLACAR HUD (WIN RATE / SALDO R)
 // ══════════════════════════════════════════════════════════════════════════════
-var int   simPos = 0
-var float simEntry = na
-var float simSL = na
-var float simTP = na
-var int   wins = 0
-var int   losses = 0
-var float saldoR = 0.0
-var int   totalSignals = 0
+var int   simState = 0
+var float simEntryP = na
+var float simSLP = na
+var float simTPP = na
+var int   winCount = 0
+var int   lossCount = 0
+var float cumulativeR = 0.0
+var int   sigCount = 0
 
-if buySignal and simPos == 0
-    simPos := 1
-    simEntry := close
-    simSL := tradeSL
-    simTP := tradeTP
-    totalSignals += 1
+if buySignal and simState == 0
+    simState := 1
+    simEntryP := close
+    simSLP := activeSL
+    simTPP := activeTP
+    sigCount += 1
 
-if sellSignal and simPos == 0
-    simPos := -1
-    simEntry := close
-    simSL := tradeSL
-    simTP := tradeTP
-    totalSignals += 1
-
-if simPos == 1
-    if low <= simSL
-        losses += 1
-        saldoR -= 1.0
-        simPos := 0
-    else if high >= simTP
-        wins += 1
-        saldoR += rrRatio
-        simPos := 0
-
-if simPos == -1
-    if high >= simSL
-        losses += 1
-        saldoR -= 1.0
-        simPos := 0
-    else if low <= simTP
-        wins += 1
-        saldoR += rrRatio
-        simPos := 0
+if simState == 1
+    if low <= simSLP
+        lossCount += 1
+        cumulativeR -= 1.0
+        simState := 0
+    else if high >= simTPP
+        winCount += 1
+        cumulativeR += rrRatio
+        simState := 0
 
 var table hud = table.new(position.top_right, 2, 11, bgcolor=color.new(#0b1220, 15), border_width=1, border_color=color.new(color.gray, 60))
 
 if showHud and barstate.islast
-    int totalTrades = wins + losses
-    float winRate = totalTrades > 0 ? (100.0 * wins / totalTrades) : 0.0
+    int totTrades = winCount + lossCount
+    float winRate = totTrades > 0 ? (100.0 * winCount / totTrades) : 0.0
     
     table.cell(hud, 0, 0, "CVD DIV FIB", text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 0, phase == 2 ? "retrace ALTA" : phase == -2 ? "retrace BAIXA" : phase == 1 ? "impulso ALTA" : phase == -1 ? "impulso BAIXA" : "monitorando", text_color=color.yellow, text_size=size.small)
+    table.cell(hud, 1, 0, trendMode == 1 ? (retraceActive ? "retrace ALTA" : "impulso ALTA") : trendMode == -1 ? (retraceActive ? "retrace BAIXA" : "impulso BAIXA") : "monitorando", text_color=color.yellow, text_size=size.small)
     
     table.cell(hud, 0, 1, "CHoCH", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 1, chochDir == 1 ? "▲ alta" : chochDir == -1 ? "▼ baixa" : "—", text_color=chochDir == 1 ? color.lime : chochDir == -1 ? color.red : color.silver, text_size=size.small)
+    table.cell(hud, 1, 1, trendMode == 1 ? "▲ alta" : trendMode == -1 ? "▼ baixa" : "—", text_color=trendMode == 1 ? color.lime : trendMode == -1 ? color.red : color.silver, text_size=size.small)
     
     table.cell(hud, 0, 2, "Fibo 0.5", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 2, not na(fibPrice) ? "$" + str.tostring(fibPrice, format.mintick) : "—", text_color=color.orange, text_size=size.small)
+    table.cell(hud, 1, 2, not na(fib50) ? "$" + str.tostring(fib50, format.mintick) : "—", text_color=color.orange, text_size=size.small)
     
     table.cell(hud, 0, 3, "Vela ref (barras)", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 3, refBar >= 0 ? str.tostring(bar_index - refBar) : "—", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 3, refCandleBar >= 0 ? str.tostring(bar_index - refCandleBar) : "—", text_color=color.white, text_size=size.small)
     
     table.cell(hud, 0, 4, "GATILHO ($)", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 4, refBar >= 0 ? "$" + str.tostring(phase == 2 ? refHi : refLo, format.mintick) : "—", text_color=color.yellow, text_size=size.small)
+    table.cell(hud, 1, 4, refCandleBar >= 0 and not na(refCandleHigh) ? "$" + str.tostring(refCandleHigh, format.mintick) : "—", text_color=color.yellow, text_size=size.small)
     
     table.cell(hud, 0, 5, "Div CVD", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 5, divBullActive ? "🟢 ALTA ATIVA" : divBearActive ? "🔴 BAIXA ATIVA" : "—", text_color=divBullActive ? color.lime : divBearActive ? color.red : color.silver, text_size=size.small)
+    table.cell(hud, 1, 5, divergenceBullFound ? "🟢 ALTA ATIVA" : "—", text_color=divergenceBullFound ? color.lime : color.silver, text_size=size.small)
     
     table.cell(hud, 0, 6, "CVD Bruto", text_color=color.silver, text_size=size.small)
     table.cell(hud, 1, 6, str.tostring(cvd, "#,###"), text_color=#ffb300, text_size=size.small)
     
     table.cell(hud, 0, 7, "Sinais", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 7, str.tostring(totalSignals), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 7, str.tostring(sigCount), text_color=color.white, text_size=size.small)
     
     table.cell(hud, 0, 8, "PLACAR W-L", text_color=color.white, text_size=size.small)
-    table.cell(hud, 1, 8, str.tostring(wins) + "W - " + str.tostring(losses) + "L", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 8, str.tostring(winCount) + "W - " + str.tostring(lossCount) + "L", text_color=color.white, text_size=size.small)
     
     table.cell(hud, 0, 9, "Win Rate", text_color=color.silver, text_size=size.small)
     table.cell(hud, 1, 9, str.tostring(winRate, "#.1") + "%", text_color=winRate >= 50.0 ? color.lime : color.orange, text_size=size.small)
     
     table.cell(hud, 0, 10, "Saldo R", text_color=color.silver, text_size=size.small)
-    table.cell(hud, 1, 10, (saldoR >= 0 ? "+" : "") + str.tostring(saldoR, "#.##") + "R", text_color=saldoR >= 0 ? color.lime : color.red, text_size=size.small)
+    table.cell(hud, 1, 10, (cumulativeR >= 0 ? "+" : "") + str.tostring(cumulativeR, "#.##") + "R", text_color=cumulativeR >= 0 ? color.lime : color.red, text_size=size.small)
 
 alertcondition(buySignal, "Compra Fibo 0.5 + CVD", "COMPRA disparada em {{ticker}} @ {{close}} | Alvo: {{plot_1}} | Stop: {{plot_0}}")
-alertcondition(sellSignal, "Venda Fibo 0.5 + CVD", "VENDA disparada em {{ticker}} @ {{close}} | Alvo: {{plot_1}} | Stop: {{plot_0}}")
-alertcondition(divBull and bar_index == divBullBar, "Divergência CVD Alta", "Divergência Bullish de CVD detectada em {{ticker}}")
-alertcondition(divBear and bar_index == divBearBar, "Divergência CVD Baixa", "Divergência Bearish de CVD detectada em {{ticker}}")
+alertcondition(divergenceBullFound, "Divergência CVD Alta", "Divergência Bullish de CVD detectada em {{ticker}}")
