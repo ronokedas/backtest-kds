@@ -1,0 +1,23 @@
+
+======================================================================
+        RESULTADO DO BACKTEST DE SCALP (M5 — 5 A 20 MINUTOS)
+======================================================================
+Pares testados:        30
+Total de trades:       2327
+Win Rate:              57.1%
+Profit Factor:         2.06
+Expectancia:           +0.43 R/trade
+PnL Liquido:           +552.73 R
+Retorno medio liquido: +0.012% por trade
+Duracao media:         5.9 min | mediana 5 min
+Dentro da janela 5-20 min: 82.7%
+----------------------------------------------------------------------
+[PASS] amostra >= 200 trades
+[PASS] win rate >= 55%
+[PASS] profit factor >= 1.5
+[PASS] expectancia >= +0.15R
+[PASS] pnl liquido > 0R
+[FAIL] >= 90% das operacoes entre 5 e 20 min
+----------------------------------------------------------------------
+VEREDITO: REPROVADO ❌
+======================================================================
